@@ -50,14 +50,33 @@ function getSafeViewportSize() {
 }
 
 function resizeCanvas() {
+  const oldW = canvas.width || 0;
+  const oldH = canvas.height || 0;
+  const size = getSafeViewportSize();
+  canvas.width = size.w;
+  canvas.height = size.h;
+  canvas.style.width = size.w + "px";
+  canvas.style.height = size.h + "px";
+
+  // Keep the player/buttons in sync when the browser, iframe, or phone orientation changes.
+  if (oldW && oldH && player && typeof player.x === "number" && typeof player.y === "number") {
+    const sx = size.w / oldW;
+    const sy = size.h / oldH;
+    player.x = Math.max(0, Math.min(size.w - player.size, player.x * sx));
+    player.y = Math.max(0, Math.min(size.h - player.size, player.y * sy));
+  }
+  mouseX = Math.max(0, Math.min(size.w, mouseX));
+  mouseY = Math.max(0, Math.min(size.h, mouseY));
+}
+
+// Initial canvas size only. Do NOT call resizeCanvas() yet because player/mouse variables are declared later.
+{
   const size = getSafeViewportSize();
   canvas.width = size.w;
   canvas.height = size.h;
   canvas.style.width = size.w + "px";
   canvas.style.height = size.h + "px";
 }
-
-resizeCanvas();
 window.addEventListener("resize", resizeCanvas, { passive: true });
 window.addEventListener("orientationchange", function() {
   setTimeout(resizeCanvas, 80);
@@ -72,6 +91,8 @@ if (window.visualViewport) {
 let touchMode = false;
 let lastTouchModeTime = 0;
 let isTryingFullscreen = false;
+let firstPlayHelpUntil = 0;
+const FIRST_PLAY_HELP_KEY = "skyfall_seen_first_play_help_v1";
 
 function isTouchMode() {
   return touchMode || (navigator.maxTouchPoints && navigator.maxTouchPoints > 0 && Math.min(canvas.width, canvas.height) < 700);
@@ -319,7 +340,7 @@ let playerBurnDamage = 0;
 let saveMessage = "";
 let saveMessageTimer = 0;
 const SAVE_KEY = "skyfall_save_v1";
-const GAME_BUILD = "v33-minimal-time-coins";
+const GAME_BUILD = "v35-black-screen-fix";
 
 let playerNickname = localStorage.getItem("skyfall_player_nickname") || "Blue";
 let selectedOperation = null;
@@ -1659,6 +1680,12 @@ function resetGame() {
   dashCooldown = 0;
   dashTimer = 0;
   gameStartTime = Date.now();
+  if (!localStorage.getItem(FIRST_PLAY_HELP_KEY)) {
+    firstPlayHelpUntil = Date.now() + 5000;
+    localStorage.setItem(FIRST_PLAY_HELP_KEY, "yes");
+  } else {
+    firstPlayHelpUntil = Date.now() + 1800;
+  }
   paused = false;
   playerFlashTimer = 0;
   lowHealthFlashTimer = 0;
@@ -4007,6 +4034,38 @@ function drawGameOverScreen() {
   drawFullscreenButton();
 }
 
+function drawFirstPlayHelpOverlay() {
+  if (gameState !== "playing" || Date.now() > firstPlayHelpUntil) return;
+  const remaining = Math.max(0, firstPlayHelpUntil - Date.now());
+  const alpha = Math.min(1, remaining / 700);
+  ctx.save();
+  const w = Math.min(isTouchMode() ? 420 : 560, canvas.width - 28);
+  const h = isTouchMode() ? 96 : 112;
+  const x = canvas.width / 2 - w / 2;
+  const y = isTouchMode() ? 70 : 82;
+  ctx.globalAlpha = alpha;
+  ctx.fillStyle = "rgba(0,0,0,0.66)";
+  roundRect(x, y, w, h, 16);
+  ctx.fill();
+  ctx.strokeStyle = "rgba(0,229,255,0.85)";
+  ctx.lineWidth = 2;
+  roundRect(x, y, w, h, 16);
+  ctx.stroke();
+  ctx.textAlign = "center";
+  ctx.fillStyle = "#e8fbff";
+  ctx.font = "bold " + (isTouchMode() ? 18 : 24) + "px Arial";
+  ctx.fillText("HOW TO PLAY", canvas.width / 2, y + 31);
+  ctx.font = (isTouchMode() ? "15px" : "18px") + " Arial";
+  if (isTouchMode()) {
+    ctx.fillText("Left joystick moves. FIRE auto-aims.", canvas.width / 2, y + 59);
+    ctx.fillText("Use DASH to escape danger.", canvas.width / 2, y + 82);
+  } else {
+    ctx.fillText("WASD / Arrows move  •  Mouse aims  •  Click shoots", canvas.width / 2, y + 63);
+    ctx.fillText("Space dash  •  Q quits to menu", canvas.width / 2, y + 90);
+  }
+  ctx.restore();
+}
+
 function drawPauseScreen() {
   ctx.fillStyle = "rgba(0, 0, 0, 0.6)";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -4058,6 +4117,7 @@ function drawGame() {
   ctx.restore();
 
   drawUI();
+  drawFirstPlayHelpOverlay();
   drawOperationHUD();
   drawQuitButton();
   // Radar removed for a cleaner screen.
