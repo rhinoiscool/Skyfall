@@ -5,14 +5,17 @@
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Skyfall">
   <title>Skyfall</title>
   <style>
 html, body {
     margin: 0;
     width: 100%;
     height: 100%;
+    min-height: 100%;
     background: black;
     overflow: hidden;
+    position: fixed;
     overscroll-behavior: none;
     touch-action: none;
     -webkit-user-select: none;
@@ -74,6 +77,12 @@ function isTouchMode() {
   return touchMode || (navigator.maxTouchPoints && navigator.maxTouchPoints > 0 && Math.min(canvas.width, canvas.height) < 700);
 }
 
+function isMobileScreen() {
+  // Stronger check: iPhone/iPad can report a large canvas in some browser states,
+  // so do NOT rely only on canvas size. Any touch device gets the mobile HUD.
+  return !!(navigator.maxTouchPoints && navigator.maxTouchPoints > 0) || touchMode || window.innerWidth <= 900 || window.innerHeight <= 700;
+}
+
 function isLandscapePlay() {
   return canvas.width > canvas.height;
 }
@@ -97,19 +106,21 @@ function getTouchControls() {
   };
 
   const fireR = landscape
-    ? Math.max(34, Math.min(46, small * 0.096))
-    : Math.max(38, Math.min(52, small * 0.105));
+    ? Math.max(30, Math.min(42, small * 0.086))
+    : Math.max(36, Math.min(48, small * 0.098));
 
+  const fs = getFullscreenButton();
   const fire = {
-    x: canvas.width - pad - fireR,
+    // Leave the far bottom-right corner for the fullscreen button.
+    x: canvas.width - pad - fireR - fs.w - 12,
     y: canvas.height - pad - fireR,
     r: fireR
   };
 
   const dash = {
-    x: fire.x - fireR * 1.85,
-    y: fire.y + fireR * 0.10,
-    r: Math.max(24, fireR * 0.60)
+    x: fire.x - fireR * 1.70,
+    y: fire.y + fireR * 0.06,
+    r: Math.max(22, fireR * 0.58)
   };
 
   return { joy, fire, dash };
@@ -137,7 +148,60 @@ function requestGameFullscreen() {
     const fn = el.requestFullscreen || el.webkitRequestFullscreen || el.msRequestFullscreen;
     if (fn) fn.call(el);
   } catch (err) {}
-  setTimeout(function(){ isTryingFullscreen = false; resizeCanvas(); }, 300);
+  nudgeBrowserChromeAway();
+  setTimeout(function(){ isTryingFullscreen = false; resizeCanvas(); nudgeBrowserChromeAway(); }, 300);
+}
+
+function isFullscreenActive() {
+  return !!(document.fullscreenElement || document.webkitFullscreenElement || document.msFullscreenElement);
+}
+
+function getFullscreenButton() {
+  const small = Math.min(canvas.width, canvas.height);
+  const size = Math.max(34, Math.min(44, small * 0.07));
+  const pad = Math.max(8, small * 0.018);
+  return { x: canvas.width - pad - size, y: canvas.height - pad - size, w: size, h: size };
+}
+
+function pointInRect(px, py, r) {
+  return px >= r.x && px <= r.x + r.w && py >= r.y && py <= r.y + r.h;
+}
+
+function drawFullscreenButton() {
+  if (!isTouchMode()) return;
+  const b = getFullscreenButton();
+  ctx.save();
+  ctx.globalAlpha = isFullscreenActive() ? 0.28 : 0.62;
+  ctx.fillStyle = "rgba(0,0,0,0.48)";
+  ctx.strokeStyle = "rgba(255,255,255,0.72)";
+  ctx.lineWidth = 2;
+  roundRect(b.x, b.y, b.w, b.h, 9);
+  ctx.fill();
+  ctx.stroke();
+  const m = b.w * 0.25;
+  const e = b.w * 0.42;
+  ctx.strokeStyle = "#ffffff";
+  ctx.beginPath();
+  ctx.moveTo(b.x + m, b.y + e); ctx.lineTo(b.x + m, b.y + m); ctx.lineTo(b.x + e, b.y + m);
+  ctx.moveTo(b.x + b.w - m, b.y + e); ctx.lineTo(b.x + b.w - m, b.y + m); ctx.lineTo(b.x + b.w - e, b.y + m);
+  ctx.moveTo(b.x + m, b.y + b.h - e); ctx.lineTo(b.x + m, b.y + b.h - m); ctx.lineTo(b.x + e, b.y + b.h - m);
+  ctx.moveTo(b.x + b.w - m, b.y + b.h - e); ctx.lineTo(b.x + b.w - m, b.y + b.h - m); ctx.lineTo(b.x + b.w - e, b.y + b.h - m);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function handleFullscreenTap(px, py) {
+  if (!isTouchMode()) return false;
+  if (pointInRect(px, py, getFullscreenButton())) {
+    requestGameFullscreen();
+    showSaveMessage(isFullscreenActive() ? "FULLSCREEN ON" : "FULLSCREEN REQUESTED");
+    return true;
+  }
+  return false;
+}
+
+function nudgeBrowserChromeAway() {
+  try { window.scrollTo(0, 1); } catch (err) {}
 }
 
 function aimAtClosestEnemy() {
@@ -255,7 +319,7 @@ let playerBurnDamage = 0;
 let saveMessage = "";
 let saveMessageTimer = 0;
 const SAVE_KEY = "skyfall_save_v1";
-const GAME_BUILD = "v30-touch-easier-difficulty";
+const GAME_BUILD = "v33-minimal-time-coins";
 
 let playerNickname = localStorage.getItem("skyfall_player_nickname") || "Blue";
 let selectedOperation = null;
@@ -479,6 +543,7 @@ function drawOperationsMenu() {
 
   drawBuildMarker();
   drawSaveMessage();
+  drawFullscreenButton();
   drawMenuCursor();
 }
 
@@ -561,6 +626,26 @@ const player = {
   health: 100,
   maxHealth: 100
 };
+
+let lastRunStats = null;
+function getRunStats() {
+  const seconds = Math.max(0, Math.floor((Date.now() - gameStartTime) / 1000));
+  return {
+    seconds,
+    kills,
+    coins: totalCoins,
+    difficulty: getMainDifficulty().label,
+    weapon: currentWeapon.toUpperCase()
+  };
+}
+
+function setGameOver() {
+  lastRunStats = getRunStats();
+  paused = false;
+  mobileFireHeld = false;
+  clearMobileMoveKeys();
+  gameState = "gameover";
+}
 
 document.addEventListener("keydown", function(e) {
   keys[e.key.toLowerCase()] = true;
@@ -665,10 +750,15 @@ canvas.addEventListener("mousemove", function(e) {
 
 canvas.addEventListener("mousedown", function(e) {
   canvas.focus();
+  if (handleFullscreenTap(e.clientX, e.clientY)) return;
   setPointerFromClient(e.clientX, e.clientY);
   if (gameState !== "lobby") hideLobbyInput();
   if (gameState === "mode25d") {
     mode25DShoot();
+    return;
+  }
+  if (gameState === "gameover") {
+    handleGameOverClick(e.clientX, e.clientY);
     return;
   }
 
@@ -785,6 +875,7 @@ function handleTouchMenuAction(touch) {
   else if (gameState === "original") checkOriginalButtons(mouseX, mouseY);
   else if (gameState === "originalPlaying") originalShoot();
   else if (gameState === "mode25d") mode25DShoot();
+  else if (gameState === "gameover") handleGameOverClick(mouseX, mouseY);
 }
 
 canvas.addEventListener("touchstart", function(e) {
@@ -794,9 +885,15 @@ canvas.addEventListener("touchstart", function(e) {
   canvas.focus();
   resizeCanvas();
   requestGameFullscreen();
+  nudgeBrowserChromeAway();
 
   for (const touch of e.changedTouches) {
     const pt = clientToCanvasPoint(touch.clientX, touch.clientY);
+    if (handleFullscreenTap(pt.x, pt.y)) continue;
+    if (gameState === "gameover") {
+      handleGameOverClick(pt.x, pt.y);
+      continue;
+    }
     if (gameState === "playing") {
       const controls = getTouchControls();
       if (checkQuitButton(pt.x, pt.y)) return;
@@ -2450,7 +2547,7 @@ function checkCollisions() {
 
   if (player.health <= 0) {
     if (operationMode && operationCompleteTimer <= 0) failOperation();
-    else if (!operationMode) gameState = "main";
+    else if (!operationMode) setGameOver();
   }
 }
 
@@ -3066,6 +3163,7 @@ function drawEffects() {
 }
 
 function drawRadar() {
+  if (isMobileScreen()) return;
   const w = 150;
   const h = 100;
   const x = canvas.width - w - 20;
@@ -3102,109 +3200,57 @@ function drawBossWarning() {
 }
 
 function drawMobileCompactUI() {
+  // Mobile gets a tiny HUD only. The big PLAYER STATUS sheet was eating the screen.
   ctx.save();
   const hpPct = Math.max(0, player.health / player.maxHealth);
-  const panelW = Math.min(360, canvas.width - 150);
-  const x = canvas.width / 2 - panelW / 2;
-  const y = 10;
-  ctx.fillStyle = "rgba(3, 14, 24, 0.52)";
-  roundRect(x, y, panelW, 46, 12);
+  const panelW = Math.min(315, Math.max(220, canvas.width * 0.46));
+  const x = Math.max(8, canvas.width / 2 - panelW / 2);
+  const y = 8;
+  ctx.fillStyle = "rgba(3, 14, 24, 0.42)";
+  roundRect(x, y, panelW, 38, 11);
   ctx.fill();
-  ctx.strokeStyle = "rgba(0, 229, 255, 0.45)";
-  ctx.lineWidth = 1.5;
-  roundRect(x, y, panelW, 46, 12);
+  ctx.strokeStyle = "rgba(0, 229, 255, 0.35)";
+  ctx.lineWidth = 1.2;
+  roundRect(x, y, panelW, 38, 11);
   ctx.stroke();
-  ctx.fillStyle = "rgba(0,0,0,0.65)";
-  roundRect(x + 12, y + 10, panelW - 24, 10, 5);
+  ctx.fillStyle = "rgba(0,0,0,0.62)";
+  roundRect(x + 10, y + 8, panelW - 20, 8, 4);
   ctx.fill();
   ctx.fillStyle = hpPct <= 0.2 ? "#ff3333" : hpPct <= 0.5 ? "#ffd34d" : "#00ff66";
-  roundRect(x + 12, y + 10, (panelW - 24) * hpPct, 10, 5);
+  roundRect(x + 10, y + 8, (panelW - 20) * hpPct, 8, 4);
   ctx.fill();
   ctx.textAlign = "center";
-  ctx.fillStyle = "#e8fbff";
-  ctx.font = "bold 13px Arial";
-  ctx.fillText("TOUCH MODE   " + getMainDifficulty().label + "   HP " + Math.ceil(Math.max(0, player.health)) + "/" + player.maxHealth + "   $" + totalCoins, canvas.width / 2, y + 34);
+  ctx.fillStyle = "rgba(232,251,255,0.92)";
+  ctx.font = "bold 12px Arial";
+  ctx.fillText(getMainDifficulty().label + "   HP " + Math.ceil(Math.max(0, player.health)) + "/" + player.maxHealth + "   $" + totalCoins, canvas.width / 2, y + 28);
   ctx.restore();
 }
 
 function drawUI() {
-  if (isTouchMode() && isLandscapePlay()) {
-    drawMobileCompactUI();
-    return;
-  }
-  const x = 14;
-  const y = 12;
-  const w = 210;
-  const h = 296;
+  // Minimal HUD for both computer and mobile: ONLY time and coins in the corner.
+  const seconds = Math.max(0, Math.floor((Date.now() - gameStartTime) / 1000));
+  const timeText = "Time:" + formatTime(seconds);
+  const coinText = "$" + totalCoins;
 
   ctx.save();
-  ctx.fillStyle = "rgba(3, 14, 24, 0.82)";
-  roundRect(x, y, w, h, 14);
+  const x = 12;
+  const y = 12;
+  const w = 132;
+  const h = 54;
+  ctx.fillStyle = "rgba(0,0,0,0.38)";
+  roundRect(x, y, w, h, 10);
   ctx.fill();
-
-  ctx.strokeStyle = "rgba(0, 229, 255, 0.7)";
-  ctx.lineWidth = 2;
-  roundRect(x, y, w, h, 14);
-  ctx.stroke();
-
-  ctx.fillStyle = "#8beeff";
-  ctx.font = "bold 14px Arial";
-  ctx.fillText("PLAYER STATUS", x + 14, y + 25);
-
-  ctx.fillStyle = "#e8fbff";
-  ctx.font = "13px Arial";
-  const labelX = x + 14;
-  let lineY = y + 50;
-  const gap = 22;
-
-  ctx.fillText("Health: " + Math.ceil(Math.max(0, player.health)) + "/" + player.maxHealth, labelX, lineY);
-  const hpBarX = labelX;
-  const hpBarY = lineY + 7;
-  const hpBarW = 176;
-  const hpBarH = 9;
-  const hpPct = Math.max(0, player.health / player.maxHealth);
-  ctx.fillStyle = "rgba(0,0,0,0.65)";
-  roundRect(hpBarX, hpBarY, hpBarW, hpBarH, 5);
-  ctx.fill();
-  ctx.fillStyle = hpPct <= 0.2 ? "#ff3333" : hpPct <= 0.5 ? "#ffd34d" : "#00ff66";
-  roundRect(hpBarX, hpBarY, hpBarW * hpPct, hpBarH, 5);
-  ctx.fill();
-  ctx.strokeStyle = "rgba(255,255,255,0.5)";
+  ctx.strokeStyle = "rgba(255,255,255,0.22)";
   ctx.lineWidth = 1;
-  roundRect(hpBarX, hpBarY, hpBarW, hpBarH, 5);
-  ctx.stroke();
-  lineY += gap + 8;
-  ctx.fillStyle = "#e8fbff";
-  ctx.fillText("Coins: " + totalCoins, labelX, lineY);
-  lineY += gap;
-  ctx.fillText("Weapon: " + currentWeapon.toUpperCase(), labelX, lineY);
-  lineY += gap;
-  ctx.fillText("Sidekicks: " + sidekickCount + "/2", labelX, lineY);
-  lineY += gap;
-  ctx.fillText("Boss in: " + Math.max(0, killsNeededForBoss - kills), labelX, lineY);
-  lineY += gap;
-  ctx.fillText("Difficulty: " + getMainDifficulty().label, labelX, lineY);
-  lineY += gap;
-  ctx.fillText("Next Boss HP: " + bossMaxHealth, labelX, lineY);
-  lineY += gap;
-  ctx.fillText("Dash: " + (dashCooldown <= 0 ? "READY" : Math.ceil(dashCooldown / 60) + "s"), labelX, lineY);
-  lineY += gap;
-  ctx.fillText("Magnet: LV " + magnetLevel + "/8", labelX, lineY);
-
-  // Time has its own lower section so it does not crash into Magnet.
-  ctx.strokeStyle = "rgba(0, 229, 255, 0.25)";
-  ctx.beginPath();
-  ctx.moveTo(x + 12, y + h - 48);
-  ctx.lineTo(x + w - 12, y + h - 48);
+  roundRect(x, y, w, h, 10);
   ctx.stroke();
 
-  const seconds = Math.floor((Date.now() - gameStartTime) / 1000);
-  const mins = Math.floor(seconds / 60);
-  const secs = String(seconds % 60).padStart(2, "0");
+  ctx.textAlign = "left";
+  ctx.fillStyle = "#ffffff";
+  ctx.font = "bold 16px Arial";
+  ctx.fillText(timeText, x + 10, y + 22);
   ctx.fillStyle = "#ffd34d";
-  ctx.font = "bold 14px Arial";
-  ctx.fillText("Time Survived: " + mins + ":" + secs, labelX, y + h - 20);
-
+  ctx.fillText(coinText, x + 10, y + 44);
   ctx.restore();
 }
 
@@ -3872,6 +3918,95 @@ function drawCrosshairPreview(x, y) {
   ctx.restore();
 }
 
+
+function formatTime(seconds) {
+  const mins = Math.floor(seconds / 60);
+  const secs = String(seconds % 60).padStart(2, "0");
+  return mins + ":" + secs;
+}
+
+function getGameOverButtons() {
+  const bw = Math.min(260, canvas.width - 80);
+  const bh = isTouchMode() ? 54 : 46;
+  const gap = 14;
+  const x = canvas.width / 2 - bw / 2;
+  const y = canvas.height / 2 + 80;
+  return {
+    replay: { x, y, w: bw, h: bh, text: "REPLAY" },
+    menu: { x, y: y + bh + gap, w: bw, h: bh, text: "MAIN MENU" }
+  };
+}
+
+function handleGameOverClick(x, y) {
+  const b = getGameOverButtons();
+  if (pointInRect(x, y, b.replay)) { resetGame(); return true; }
+  if (pointInRect(x, y, b.menu)) { gameState = "main"; return true; }
+  return false;
+}
+
+function drawGameOverScreen() {
+  drawBackground();
+  const stats = lastRunStats || getRunStats();
+  ctx.save();
+  ctx.fillStyle = "rgba(0,0,0,0.68)";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  const panelW = Math.min(520, canvas.width - 34);
+  const panelH = Math.min(430, canvas.height - 42);
+  const panelX = canvas.width / 2 - panelW / 2;
+  const panelY = Math.max(18, canvas.height / 2 - panelH / 2);
+
+  ctx.fillStyle = "rgba(3,14,24,0.93)";
+  roundRect(panelX, panelY, panelW, panelH, 22);
+  ctx.fill();
+  ctx.strokeStyle = "rgba(255,80,80,0.9)";
+  ctx.lineWidth = 2;
+  roundRect(panelX, panelY, panelW, panelH, 22);
+  ctx.stroke();
+
+  ctx.textAlign = "center";
+  ctx.shadowColor = "#ff3333";
+  ctx.shadowBlur = 14;
+  ctx.fillStyle = "#fff1f1";
+  ctx.font = "bold " + (isTouchMode() ? 38 : 48) + "px Arial";
+  ctx.fillText("GAME OVER", canvas.width / 2, panelY + 62);
+  ctx.shadowBlur = 0;
+
+  ctx.fillStyle = "#ffd34d";
+  ctx.font = "bold 18px Arial";
+  ctx.fillText("Run Stats", canvas.width / 2, panelY + 98);
+
+  ctx.textAlign = "left";
+  ctx.fillStyle = "#e8fbff";
+  ctx.font = "16px Arial";
+  const sx = panelX + 54;
+  let sy = panelY + 136;
+  const line = 28;
+  ctx.fillText("Time survived: " + formatTime(stats.seconds), sx, sy); sy += line;
+  ctx.fillText("Kills: " + stats.kills, sx, sy); sy += line;
+  ctx.fillText("Coins total: $" + stats.coins, sx, sy); sy += line;
+  ctx.fillText("Difficulty: " + stats.difficulty, sx, sy); sy += line;
+  ctx.fillText("Weapon: " + stats.weapon, sx, sy); sy += line;
+
+  const buttons = getGameOverButtons();
+  for (const key of ["replay", "menu"]) {
+    const btn = buttons[key];
+    ctx.fillStyle = key === "replay" ? "rgba(0,150,80,0.82)" : "rgba(0,80,130,0.82)";
+    ctx.strokeStyle = key === "replay" ? "#43ff98" : "#00e5ff";
+    ctx.lineWidth = 2;
+    roundRect(btn.x, btn.y, btn.w, btn.h, 13);
+    ctx.fill();
+    ctx.stroke();
+    ctx.textAlign = "center";
+    ctx.fillStyle = "#ffffff";
+    ctx.font = "bold 22px Arial";
+    ctx.fillText(btn.text, btn.x + btn.w / 2, btn.y + btn.h / 2 + 8);
+  }
+
+  ctx.restore();
+  drawFullscreenButton();
+}
+
 function drawPauseScreen() {
   ctx.fillStyle = "rgba(0, 0, 0, 0.6)";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -3925,11 +4060,12 @@ function drawGame() {
   drawUI();
   drawOperationHUD();
   drawQuitButton();
-  drawRadar();
+  // Radar removed for a cleaner screen.
   drawBossWarning();
   drawCrosshair();
   drawSaveMessage();
   drawTouchControls();
+  drawFullscreenButton();
 
   if (paused) drawPauseScreen();
 }
@@ -4829,6 +4965,7 @@ function gameLoop() {
     else if (gameState === "tutorial") { hideLobbyInput(); drawTutorialScreen(); }
     else if (gameState === "original") { hideLobbyInput(); drawOriginalProjectScreen(); }
     else if (gameState === "originalPlaying") { hideLobbyInput(); drawOriginalPlaying(); }
+    else if (gameState === "gameover") { hideLobbyInput(); drawGameOverScreen(); }
     else drawGame();
   
     requestAnimationFrame(gameLoop);
