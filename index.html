@@ -7,7 +7,7 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="Skyfall">
   <title>Skyfall</title>
-<!-- Skyfall v45: same canvas tutorial on mobile + mobile weapon switch button -->
+<!-- Skyfall v48: mobile weapon switch no longer saves or breaks save/load -->
   <style>
 html, body {
     margin: 0;
@@ -97,7 +97,8 @@ let touchMode = false;
 let lastTouchModeTime = 0;
 let isTryingFullscreen = false;
 let firstPlayHelpUntil = 0;
-let tutorialSeen = localStorage.getItem("skyfall_tutorial_seen_v45") === "yes";
+const TUTORIAL_SEEN_KEY = "skyfall_tutorial_seen_v47";
+let tutorialSeen = localStorage.getItem(TUTORIAL_SEEN_KEY) === "yes";
 const FIRST_PLAY_HELP_KEY = "skyfall_seen_first_play_help_v1";
 
 function isTouchMode() {
@@ -1326,13 +1327,34 @@ function addFloatingText(text, x, y, color = "white") {
   floatingTexts.push({ text, x, y, color, life: 45 });
 }
 
+function isPhonePortraitShop() {
+  return canvas.width < 650 && canvas.height > canvas.width;
+}
+
+function getShopTop() {
+  return isPhonePortraitShop() ? 128 : SHOP_TOP;
+}
+
+function getShopButtonH() {
+  return isPhonePortraitShop() ? 38 : SHOP_BUTTON_H;
+}
+
+function getShopItemGap() {
+  return isPhonePortraitShop() ? 48 : SHOP_ITEM_GAP;
+}
+
+function getShopItemCount() {
+  return isPhonePortraitShop() ? 14 : SHOP_ITEM_COUNT;
+}
+
 function getShopBottom() {
-  return canvas.height - SHOP_BOTTOM_PADDING;
+  // v46: dynamic bottom. On iPhone portrait the controls panel is shorter, so the list gets more room.
+  return isPhonePortraitShop() ? canvas.height - 112 : canvas.height - SHOP_BOTTOM_PADDING;
 }
 
 function getMaxShopScroll() {
-  const contentHeight = SHOP_ITEM_COUNT * SHOP_ITEM_GAP + SHOP_BUTTON_H;
-  const visibleHeight = getShopBottom() - SHOP_TOP;
+  const contentHeight = getShopItemCount() * getShopItemGap() + getShopButtonH();
+  const visibleHeight = getShopBottom() - getShopTop();
   return Math.max(0, contentHeight - visibleHeight);
 }
 
@@ -1341,11 +1363,11 @@ function clampShopScroll() {
 }
 
 function getShopY(index) {
-  return SHOP_TOP + index * SHOP_ITEM_GAP - shopScroll;
+  return getShopTop() + index * getShopItemGap() - shopScroll;
 }
 
 function isButtonInShopView(button) {
-  return button.fixed || (button.y + button.h > SHOP_TOP && button.y < getShopBottom());
+  return button.fixed || (button.y + button.h > getShopTop() && button.y < getShopBottom());
 }
 
 function makeMainButton(text, x, y, w, h, action, category = "weapon") {
@@ -1588,7 +1610,7 @@ function makeButton(text, x, y, w, h, action, fixed = false, category = "upgrade
 function checkMenuButtons(x, y) {
   for (let button of menuButtons) {
     if (!isButtonInShopView(button)) continue;
-    if (!button.fixed && (y < SHOP_TOP || y > getShopBottom())) continue;
+    if (!button.fixed && (y < getShopTop() || y > getShopBottom())) continue;
 
     if (x >= button.x && x <= button.x + button.w && y >= button.y && y <= button.y + button.h) {
       button.action();
@@ -1599,8 +1621,34 @@ function checkMenuButtons(x, y) {
 
 function buildMenuButtons() {
   menuButtons.length = 0;
+  const phone = isPhonePortraitShop();
+  const h = getShopButtonH();
+
+  if (phone) {
+    const w = Math.min(canvas.width - 38, 360);
+    const x = canvas.width / 2 - w / 2;
+    makeButton("BACK TO MAIN MENU", x, 84, w, 36, function() { gameState = "main"; }, true, "rocket");
+
+    let i = 0;
+    makeButton("Health Upgrade  $" + healthLevel * 40, x, getShopY(i++), w, h, function() { const cost = healthLevel * 40; if (totalCoins >= cost) { totalCoins -= cost; healthLevel++; } }, false, "upgrade");
+    makeButton("Gun Damage  $" + gunLevel * 50, x, getShopY(i++), w, h, function() { const cost = gunLevel * 50; if (totalCoins >= cost) { totalCoins -= cost; gunLevel++; } }, false, "upgrade");
+    makeButton("Reload Speed  $" + reloadLevel * 45, x, getShopY(i++), w, h, function() { const cost = reloadLevel * 45; if (totalCoins >= cost) { totalCoins -= cost; reloadLevel++; } }, false, "upgrade");
+    makeButton(magnetLevel >= 10 ? "Magnet MAX" : "Coin Magnet  $" + ((magnetLevel + 1) * 135), x, getShopY(i++), w, h, function() { const cost = (magnetLevel + 1) * 135; if (totalCoins >= cost && magnetLevel < 10) { totalCoins -= cost; magnetLevel++; } }, false, "special");
+    makeButton("Rocket Power  $" + (rocketPowerLevel * 220), x, getShopY(i++), w, h, function() { const cost = rocketPowerLevel * 220; if (hasRocket && totalCoins >= cost) { totalCoins -= cost; rocketPowerLevel++; } }, false, "rocket");
+    makeButton("Rocket Reload  $" + (rocketReloadLevel * 260), x, getShopY(i++), w, h, function() { const cost = rocketReloadLevel * 260; if (hasRocket && totalCoins >= cost) { totalCoins -= cost; rocketReloadLevel++; } }, false, "rocket");
+    makeButton("Flame Power  $" + (flamethrowerLevel * 210), x, getShopY(i++), w, h, function() { const cost = flamethrowerLevel * 210; if (hasFlamethrower && totalCoins >= cost) { totalCoins -= cost; flamethrowerLevel++; } }, false, "rocket");
+    makeButton(hasShotgun ? "Shotgun Owned" : "Buy Shotgun  $150", x, getShopY(i++), w, h, function() { if (!hasShotgun && totalCoins >= 150) { totalCoins -= 150; hasShotgun = true; } }, false, "weapon");
+    makeButton(hasSniper ? "Sniper Owned" : "Buy Sniper  $250", x, getShopY(i++), w, h, function() { if (!hasSniper && totalCoins >= 250) { totalCoins -= 250; hasSniper = true; } }, false, "weapon");
+    makeButton(hasRocket ? "Rocket Owned" : "Buy Rocket  $400", x, getShopY(i++), w, h, function() { if (!hasRocket && totalCoins >= 400) { totalCoins -= 400; hasRocket = true; } }, false, "rocket");
+    makeButton(hasFlamethrower ? "Flamethrower Owned" : "Buy Flamethrower  $450", x, getShopY(i++), w, h, function() { if (!hasFlamethrower && totalCoins >= 450) { totalCoins -= 450; hasFlamethrower = true; } }, false, "rocket");
+    if (sidekickCount < 2) makeButton("Buy Sidekick " + (sidekickCount + 1) + "  $" + sidekickCosts[sidekickCount], x, getShopY(i++), w, h, function() { const cost = sidekickCosts[sidekickCount]; if (totalCoins >= cost && sidekickCount < 2) { totalCoins -= cost; sidekickCount++; } }, false, "sidekick");
+    else makeButton("Max 2 Sidekicks Owned", x, getShopY(i++), w, h, function() {}, false, "sidekick");
+    makeButton("Sidekick Damage  $" + sidekickLevel * 100, x, getShopY(i++), w, h, function() { const cost = sidekickLevel * 100; if (sidekickCount > 0 && totalCoins >= cost) { totalCoins -= cost; sidekickLevel++; } }, false, "sidekick");
+    makeButton("Sidekick Reload  $" + sidekickReloadLevel * 120, x, getShopY(i++), w, h, function() { const cost = sidekickReloadLevel * 120; if (sidekickCount > 0 && totalCoins >= cost) { totalCoins -= cost; sidekickReloadLevel++; } }, false, "sidekick");
+    return;
+  }
+
   const w = Math.min(430, canvas.width * 0.42);
-  const h = SHOP_BUTTON_H;
   const gap = 26;
   const leftX = canvas.width / 2 - w - gap / 2;
   const rightX = canvas.width / 2 + gap / 2;
@@ -1611,120 +1659,64 @@ function buildMenuButtons() {
 
   makeButton("Health Upgrade  $" + healthLevel * 40, leftX, getShopY(0), w, h, function() {
     const cost = healthLevel * 40;
-    if (totalCoins >= cost) {
-      totalCoins -= cost;
-      healthLevel++;
-    }
+    if (totalCoins >= cost) { totalCoins -= cost; healthLevel++; }
   }, false, "upgrade");
-
   makeButton("Gun Damage  $" + gunLevel * 50, leftX, getShopY(1), w, h, function() {
     const cost = gunLevel * 50;
-    if (totalCoins >= cost) {
-      totalCoins -= cost;
-      gunLevel++;
-    }
+    if (totalCoins >= cost) { totalCoins -= cost; gunLevel++; }
   }, false, "upgrade");
-
   makeButton("Reload Speed  $" + reloadLevel * 45, leftX, getShopY(2), w, h, function() {
     const cost = reloadLevel * 45;
-    if (totalCoins >= cost) {
-      totalCoins -= cost;
-      reloadLevel++;
-    }
+    if (totalCoins >= cost) { totalCoins -= cost; reloadLevel++; }
   }, false, "upgrade");
-
   makeButton(magnetLevel >= 10 ? "Magnet MAX" : "Coin Magnet  $" + ((magnetLevel + 1) * 135), leftX, getShopY(3), w, h, function() {
     const cost = (magnetLevel + 1) * 135;
-    if (totalCoins >= cost && magnetLevel < 10) {
-      totalCoins -= cost;
-      magnetLevel++;
-    }
+    if (totalCoins >= cost && magnetLevel < 10) { totalCoins -= cost; magnetLevel++; }
   }, false, "special");
-
   makeButton("Rocket Power  $" + (rocketPowerLevel * 220), leftX, getShopY(4), w, h, function() {
     const cost = rocketPowerLevel * 220;
-    if (hasRocket && totalCoins >= cost) {
-      totalCoins -= cost;
-      rocketPowerLevel++;
-    }
+    if (hasRocket && totalCoins >= cost) { totalCoins -= cost; rocketPowerLevel++; }
   }, false, "rocket");
-
   makeButton("Rocket Reload  $" + (rocketReloadLevel * 260), leftX, getShopY(5), w, h, function() {
     const cost = rocketReloadLevel * 260;
-    if (hasRocket && totalCoins >= cost) {
-      totalCoins -= cost;
-      rocketReloadLevel++;
-    }
+    if (hasRocket && totalCoins >= cost) { totalCoins -= cost; rocketReloadLevel++; }
   }, false, "rocket");
-
   makeButton("Flame Power  $" + (flamethrowerLevel * 210), leftX, getShopY(6), w, h, function() {
     const cost = flamethrowerLevel * 210;
-    if (hasFlamethrower && totalCoins >= cost) {
-      totalCoins -= cost;
-      flamethrowerLevel++;
-    }
+    if (hasFlamethrower && totalCoins >= cost) { totalCoins -= cost; flamethrowerLevel++; }
   }, false, "rocket");
 
   makeButton(hasShotgun ? "Shotgun Owned" : "Buy Shotgun  $150", rightX, getShopY(0), w, h, function() {
-    if (!hasShotgun && totalCoins >= 150) {
-      totalCoins -= 150;
-      hasShotgun = true;
-    }
+    if (!hasShotgun && totalCoins >= 150) { totalCoins -= 150; hasShotgun = true; }
   }, false, "weapon");
-
   makeButton(hasSniper ? "Sniper Owned" : "Buy Sniper  $250", rightX, getShopY(1), w, h, function() {
-    if (!hasSniper && totalCoins >= 250) {
-      totalCoins -= 250;
-      hasSniper = true;
-    }
+    if (!hasSniper && totalCoins >= 250) { totalCoins -= 250; hasSniper = true; }
   }, false, "weapon");
-
   makeButton(hasRocket ? "Rocket Owned" : "Buy Rocket  $400", rightX, getShopY(2), w, h, function() {
-    if (!hasRocket && totalCoins >= 400) {
-      totalCoins -= 400;
-      hasRocket = true;
-    }
+    if (!hasRocket && totalCoins >= 400) { totalCoins -= 400; hasRocket = true; }
   }, false, "rocket");
-
   makeButton(hasFlamethrower ? "Flamethrower Owned" : "Buy Flamethrower  $450", rightX, getShopY(3), w, h, function() {
-    if (!hasFlamethrower && totalCoins >= 450) {
-      totalCoins -= 450;
-      hasFlamethrower = true;
-    }
+    if (!hasFlamethrower && totalCoins >= 450) { totalCoins -= 450; hasFlamethrower = true; }
   }, false, "rocket");
-
   if (sidekickCount < 2) {
     makeButton("Buy Sidekick " + (sidekickCount + 1) + "  $" + sidekickCosts[sidekickCount], rightX, getShopY(4), w, h, function() {
       const cost = sidekickCosts[sidekickCount];
-      if (totalCoins >= cost && sidekickCount < 2) {
-        totalCoins -= cost;
-        sidekickCount++;
-      }
+      if (totalCoins >= cost && sidekickCount < 2) { totalCoins -= cost; sidekickCount++; }
     }, false, "sidekick");
   } else {
     makeButton("Max 2 Sidekicks Owned", rightX, getShopY(4), w, h, function() {}, false, "sidekick");
   }
-
   makeButton("Sidekick Damage  $" + sidekickLevel * 100, rightX, getShopY(5), w, h, function() {
     const cost = sidekickLevel * 100;
-    if (sidekickCount > 0 && totalCoins >= cost) {
-      totalCoins -= cost;
-      sidekickLevel++;
-    }
+    if (sidekickCount > 0 && totalCoins >= cost) { totalCoins -= cost; sidekickLevel++; }
   }, false, "sidekick");
-
   makeButton("Sidekick Reload  $" + sidekickReloadLevel * 120, rightX, getShopY(6), w, h, function() {
     const cost = sidekickReloadLevel * 120;
-    if (sidekickCount > 0 && totalCoins >= cost) {
-      totalCoins -= cost;
-      sidekickReloadLevel++;
-    }
+    if (sidekickCount > 0 && totalCoins >= cost) { totalCoins -= cost; sidekickReloadLevel++; }
   }, false, "sidekick");
 }
-
 function resetGame() {
   if (!tutorialSeen) {
-    tutorialSeen = true;
     startTutorial(true);
     return;
   }
@@ -1817,8 +1809,13 @@ function cycleMobileWeapon() {
   let idx = list.indexOf(currentWeapon);
   if (idx < 0) idx = 0;
   currentWeapon = list[(idx + 1) % list.length];
+
+  // v48 FIX:
+  // Mobile weapon switching should NOT call saveGame().
+  // Calling saveGame() here caused two problems:
+  // 1) The message changed from WEAPON to GAME SAVED.
+  // 2) It could overwrite the real save/load slot while the player was only switching weapons.
   showSaveMessage("WEAPON: " + getWeaponShortName(currentWeapon));
-  saveGame();
 }
 
 function shoot() {
@@ -2718,7 +2715,7 @@ function drawMenu() {
 
   ctx.save();
   ctx.beginPath();
-  ctx.rect(0, SHOP_TOP - 42, canvas.width, getShopBottom() - SHOP_TOP + 55);
+  ctx.rect(0, getShopTop() - 42, canvas.width, getShopBottom() - getShopTop() + 55);
   ctx.clip();
 
   drawShopSectionTitles();
@@ -2812,64 +2809,75 @@ function drawShopHeader() {
   ctx.textAlign = "center";
   ctx.textBaseline = "alphabetic";
 
+  const phone = isPhonePortraitShop();
   ctx.shadowColor = "#00e5ff";
-  ctx.shadowBlur = 18;
+  ctx.shadowBlur = phone ? 10 : 18;
   ctx.fillStyle = "#e8fbff";
-  ctx.font = "bold 48px Arial";
-  ctx.fillText("SKYFALL ARMORY", canvas.width / 2, 58);
+  ctx.font = "bold " + (phone ? 26 : 48) + "px Arial";
+  ctx.fillText("SKYFALL ARMORY", canvas.width / 2, phone ? 46 : 58);
   ctx.shadowBlur = 0;
 
   ctx.fillStyle = "#ffd34d";
-  ctx.font = "bold 23px Arial";
-  ctx.fillText("$ " + totalCoins, canvas.width / 2, 89);
+  ctx.font = "bold " + (phone ? 20 : 23) + "px Arial";
+  ctx.fillText("$ " + totalCoins, canvas.width / 2, phone ? 76 : 89);
 
   ctx.textAlign = "left";
 }
 
 function drawShopPanels() {
-  const panelW = Math.min(920, canvas.width - 50);
+  const phone = isPhonePortraitShop();
+  const panelW = Math.min(920, canvas.width - (phone ? 18 : 50));
   const panelX = canvas.width / 2 - panelW / 2;
-  const panelY = SHOP_TOP - 42;
+  const panelY = getShopTop() - (phone ? 30 : 42);
   const panelH = getShopBottom() - panelY + 8;
 
   ctx.fillStyle = "rgba(3, 14, 24, 0.86)";
-  roundRect(panelX, panelY, panelW, panelH, 18);
+  roundRect(panelX, panelY, panelW, panelH, phone ? 14 : 18);
   ctx.fill();
 
   ctx.strokeStyle = "rgba(0, 229, 255, 0.75)";
   ctx.lineWidth = 2;
-  roundRect(panelX, panelY, panelW, panelH, 18);
+  roundRect(panelX, panelY, panelW, panelH, phone ? 14 : 18);
   ctx.stroke();
 
-  const colGap = 24;
-  const colW = (panelW - colGap - 44) / 2;
-  const leftX = panelX + 22;
-  const rightX = leftX + colW + colGap;
-
-  ctx.fillStyle = "rgba(255,255,255,0.04)";
-  roundRect(leftX - 10, SHOP_TOP - 10, colW + 20, getShopBottom() - SHOP_TOP + 10, 14);
-  ctx.fill();
-  roundRect(rightX - 10, SHOP_TOP - 10, colW + 20, getShopBottom() - SHOP_TOP + 10, 14);
-  ctx.fill();
+  if (phone) {
+    ctx.fillStyle = "rgba(255,255,255,0.04)";
+    roundRect(panelX + 12, getShopTop() - 8, panelW - 24, getShopBottom() - getShopTop() + 10, 12);
+    ctx.fill();
+  } else {
+    const colGap = 24;
+    const colW = (panelW - colGap - 44) / 2;
+    const leftX = panelX + 22;
+    const rightX = leftX + colW + colGap;
+    ctx.fillStyle = "rgba(255,255,255,0.04)";
+    roundRect(leftX - 10, getShopTop() - 10, colW + 20, getShopBottom() - getShopTop() + 10, 14);
+    ctx.fill();
+    roundRect(rightX - 10, getShopTop() - 10, colW + 20, getShopBottom() - getShopTop() + 10, 14);
+    ctx.fill();
+  }
 }
 
 function drawShopSectionTitles() {
-  const panelW = Math.min(920, canvas.width - 50);
+  const phone = isPhonePortraitShop();
+  const panelW = Math.min(920, canvas.width - (phone ? 18 : 50));
   const panelX = canvas.width / 2 - panelW / 2;
-  const colGap = 24;
-  const colW = (panelW - colGap - 44) / 2;
-  const leftX = panelX + 22;
-  const rightX = leftX + colW + colGap;
-  const y = SHOP_TOP - 18;
+  const y = getShopTop() - (phone ? 12 : 18);
 
   ctx.fillStyle = "#8beeff";
-  ctx.font = "bold 17px Arial";
-  ctx.textAlign = "left";
-  ctx.fillText("PLAYER UPGRADES", leftX, y);
-
-  // Center this title over the right column so it does not look shifted/off.
+  ctx.font = "bold " + (phone ? 13 : 17) + "px Arial";
   ctx.textAlign = "center";
-  ctx.fillText("WEAPONS + SIDEKICKS", rightX + colW / 2, y);
+  if (phone) {
+    ctx.fillText("UPGRADES  •  WEAPONS  •  SIDEKICKS", canvas.width / 2, y);
+  } else {
+    const colGap = 24;
+    const colW = (panelW - colGap - 44) / 2;
+    const leftX = panelX + 22;
+    const rightX = leftX + colW + colGap;
+    ctx.textAlign = "left";
+    ctx.fillText("PLAYER UPGRADES", leftX, y);
+    ctx.textAlign = "center";
+    ctx.fillText("WEAPONS + SIDEKICKS", rightX + colW / 2, y);
+  }
   ctx.textAlign = "left";
 }
 
@@ -2883,19 +2891,35 @@ function getButtonColors(category, hovering) {
 }
 
 function drawMenuControlsPanel() {
-  const panelW = Math.min(920, canvas.width - 50);
-  const panelH = 145;
+  const phone = isPhonePortraitShop();
+  const panelW = Math.min(920, canvas.width - (phone ? 18 : 50));
+  const panelH = phone ? 88 : 145;
   const panelX = canvas.width / 2 - panelW / 2;
-  const panelY = canvas.height - panelH - 14;
+  const panelY = canvas.height - panelH - (phone ? 8 : 14);
 
   ctx.fillStyle = "rgba(3, 14, 24, 0.92)";
-  roundRect(panelX, panelY, panelW, panelH, 16);
+  roundRect(panelX, panelY, panelW, panelH, phone ? 12 : 16);
   ctx.fill();
 
   ctx.strokeStyle = "rgba(0, 229, 255, 0.75)";
   ctx.lineWidth = 2;
-  roundRect(panelX, panelY, panelW, panelH, 16);
+  roundRect(panelX, panelY, panelW, panelH, phone ? 12 : 16);
   ctx.stroke();
+
+  if (phone) {
+    ctx.textAlign = "center";
+    ctx.fillStyle = "#8beeff";
+    ctx.font = "bold 16px Arial";
+    ctx.fillText("CONTROLS", canvas.width / 2, panelY + 24);
+    ctx.fillStyle = "#72ff55";
+    ctx.font = "bold 13px Arial";
+    ctx.fillText("Weapon: " + currentWeapon.toUpperCase() + "   •   Tap WEAPON in game", canvas.width / 2, panelY + 48);
+    ctx.fillStyle = "#e8fbff";
+    ctx.font = "12px Arial";
+    ctx.fillText("Shop scrolls up/down • Back button returns to menu", canvas.width / 2, panelY + 68);
+    ctx.textAlign = "left";
+    return;
+  }
 
   ctx.fillStyle = "#8beeff";
   ctx.font = "bold 19px Arial";
@@ -2933,10 +2957,10 @@ function drawShopScrollBar() {
   const maxScroll = getMaxShopScroll();
   if (maxScroll <= 0) return;
 
-  const panelW = Math.min(920, canvas.width - 50);
+  const panelW = Math.min(920, canvas.width - (isPhonePortraitShop() ? 18 : 50));
   const barX = canvas.width / 2 + panelW / 2 - 17;
-  const barY = SHOP_TOP;
-  const barH = getShopBottom() - SHOP_TOP;
+  const barY = getShopTop();
+  const barH = getShopBottom() - getShopTop();
   const handleH = Math.max(35, barH * (barH / (barH + maxScroll)));
   const handleY = barY + (shopScroll / maxScroll) * (barH - handleH);
 
@@ -2987,12 +3011,17 @@ function drawButton(button) {
 
   ctx.textAlign = "left";
   ctx.fillStyle = colors.stroke;
-  ctx.font = "bold 18px Arial";
-  ctx.fillText(icon, button.x + 18, button.y + 27);
+  const phone = isPhonePortraitShop();
+  ctx.font = "bold " + (phone ? 16 : 18) + "px Arial";
+  ctx.fillText(icon, button.x + (phone ? 14 : 18), button.y + (phone ? 25 : 27));
 
   ctx.fillStyle = "#f4fbff";
-  ctx.font = button.category === "start" ? "bold 19px Arial" : "bold 16px Arial";
-  ctx.fillText(button.text, button.x + 50, button.y + 27);
+  ctx.font = button.category === "start" ? "bold " + (phone ? 16 : 19) + "px Arial" : "bold " + (phone ? 14 : 16) + "px Arial";
+  const textX = button.x + (phone ? 42 : 50);
+  const maxW = button.w - (phone ? 52 : 60);
+  let label = button.text;
+  while (ctx.measureText(label).width > maxW && label.length > 8) label = label.slice(0, -2) + "…";
+  ctx.fillText(label, textX, button.y + (phone ? 25 : 27));
 }
 
 function drawPlayerHealthMeter() {
@@ -3792,7 +3821,7 @@ function drawTutorialScreen() {
     if (tutorialRequired) {
       if (!done) return;
       tutorialSeen = true;
-      localStorage.setItem("skyfall_tutorial_seen_v45", "yes");
+      localStorage.setItem(TUTORIAL_SEEN_KEY, "yes");
       tutorialRequired = false;
       resetGame();
     } else {
